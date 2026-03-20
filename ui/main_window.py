@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QListWidget, QListWidgetItem,
     QMessageBox, QGroupBox, QStatusBar, QSplitter, QLineEdit,
-    QSpinBox,
 )
 
 from core.window_selector import WindowInfo, enumerate_windows
@@ -23,6 +22,7 @@ from models.events import ClickEvent
 class _Signals(QObject):
     """Thread-safe signals for callbacks from recorder/player threads."""
     event_recorded = pyqtSignal(object)  # ClickEvent
+    event_updated = pyqtSignal(int, object)  # index, ClickEvent (OCR done)
     playback_event = pyqtSignal(int, object)  # index, ClickEvent
     playback_done = pyqtSignal()
     recording_auto_stopped = pyqtSignal()  # when tool window gains focus
@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
 
         self._signals = _Signals()
         self._signals.event_recorded.connect(self._on_event_recorded)
+        self._signals.event_updated.connect(self._on_event_updated)
         self._signals.playback_event.connect(self._on_playback_event)
         self._signals.playback_done.connect(self._on_playback_done)
         self._signals.recording_auto_stopped.connect(self._on_recording_auto_stopped)
@@ -75,32 +76,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(win_group)
 
         # -- OCR status --
-        ocr_group = QGroupBox("OCR 引擎 (PaddleOCR)")
+        ocr_group = QGroupBox("OCR 引擎 (Kimi 文件内容提取)")
         ocr_layout = QVBoxLayout(ocr_group)
 
-        status_row = QHBoxLayout()
         self._lbl_ocr_status = QLabel("检测中...")
-        status_row.addWidget(self._lbl_ocr_status, 1)
-        self._btn_ocr_check = QPushButton("检测连接")
-        self._btn_ocr_check.clicked.connect(self._detect_ocr_status)
-        status_row.addWidget(self._btn_ocr_check)
-        ocr_layout.addLayout(status_row)
+        ocr_layout.addWidget(self._lbl_ocr_status)
 
-        # OCR server config
         cfg_row = QHBoxLayout()
-        cfg_row.addWidget(QLabel("Host:"))
-        self._edit_host = QLineEdit()
-        self._edit_host.setMaximumWidth(200)
-        cfg_row.addWidget(self._edit_host)
-        cfg_row.addWidget(QLabel("Port:"))
-        self._spin_port = QSpinBox()
-        self._spin_port.setRange(1, 65535)
-        self._spin_port.setMaximumWidth(100)
-        cfg_row.addWidget(self._spin_port)
+        cfg_row.addWidget(QLabel("API Key:"))
+        self._edit_api_key = QLineEdit()
+        self._edit_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._edit_api_key.setMinimumWidth(300)
+        cfg_row.addWidget(self._edit_api_key, 1)
         self._btn_save_config = QPushButton("保存配置")
         self._btn_save_config.clicked.connect(self._save_ocr_config)
         cfg_row.addWidget(self._btn_save_config)
-        cfg_row.addStretch()
         ocr_layout.addLayout(cfg_row)
 
         layout.addWidget(ocr_group)
@@ -151,43 +141,32 @@ class MainWindow(QMainWindow):
         self._refresh_windows()
         self._refresh_sessions()
 
-    # ── OCR status ─────────────────────────────────────────────
+    # ── OCR config ──────────────────────────────────────────────
 
     def _load_config_to_ui(self) -> None:
         cfg = load_config()
-        srv = cfg.get("ocr_server", {})
-        self._edit_host.setText(srv.get("host", "127.0.0.1"))
-        self._spin_port.setValue(srv.get("port", 8089))
+        kimi = cfg.get("kimi", {})
+        self._edit_api_key.setText(kimi.get("api_key", ""))
 
     def _save_ocr_config(self) -> None:
-        host = self._edit_host.text().strip()
-        port = self._spin_port.value()
-        if not host:
-            QMessageBox.warning(self, "提示", "Host 不能为空")
+        api_key = self._edit_api_key.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "提示", "API Key 不能为空")
             return
         cfg = load_config()
-        cfg["ocr_server"] = {"host": host, "port": port}
+        if "kimi" not in cfg:
+            cfg["kimi"] = {}
+        cfg["kimi"]["api_key"] = api_key
         save_config(cfg)
         ocr_engine.reload_config()
-        self._status.showMessage(f"配置已保存到 config.local.json  ({host}:{port})")
+        self._status.showMessage("Kimi API 配置已保存")
         self._detect_ocr_status()
 
     def _detect_ocr_status(self) -> None:
-        health = ocr_engine.check_health()
-        url = ocr_engine.server_url
-        if health.get("status") == "ok":
-            engine = health.get("engine", "PaddleOCR")
-            self._lbl_ocr_status.setText(
-                f"✅ 已连接  {engine}  |  {url}"
-            )
+        self._lbl_ocr_status.setText(ocr_engine.status_text)
+        if ocr_engine.available:
             self._lbl_ocr_status.setStyleSheet("color: green;")
         else:
-            err = health.get("error", "未知错误")
-            self._lbl_ocr_status.setText(
-                f"❌ 无法连接 OCR 服务  |  {url}\n"
-                f"   请先启动: python ocr_server.py\n"
-                f"   错误: {err}"
-            )
             self._lbl_ocr_status.setStyleSheet("color: red;")
 
     # ── window selection ──────────────────────────────────────
@@ -234,6 +213,7 @@ class MainWindow(QMainWindow):
         self._recorder = Recorder(
             session,
             on_event=lambda e: self._signals.event_recorded.emit(e),
+            on_event_updated=lambda i, e: self._signals.event_updated.emit(i, e),
             on_auto_stop=lambda: self._signals.recording_auto_stopped.emit(),
             self_hwnd=self._get_self_hwnd(),
         )
@@ -302,16 +282,24 @@ class MainWindow(QMainWindow):
     # ── signal handlers (thread-safe) ─────────────────────────
 
     def _on_event_recorded(self, event: ClickEvent) -> None:
-        idx = len(self._recorder.session.meta.events) if self._recorder else 0
-        ocr_info = ""
-        if event.ocr_text:
-            preview = event.ocr_text[:50].replace("\n", " ")
-            ocr_info = f"  OCR: {preview}..."
+        idx = len(self._recorder.session.meta.events) - 1 if self._recorder else 0
         self._list_events.addItem(
             f"[{idx}] {event.click_type} {event.button}  "
-            f"({event.rel_x}, {event.rel_y}){ocr_info}"
+            f"({event.rel_x}, {event.rel_y})"
         )
         self._list_events.scrollToBottom()
+
+    def _on_event_updated(self, index: int, event: ClickEvent) -> None:
+        """Update the list item when OCR result arrives asynchronously."""
+        if index < self._list_events.count():
+            ocr_info = ""
+            if event.ocr_text:
+                preview = event.ocr_text[:60].replace("\n", " ")
+                ocr_info = f"  OCR: {preview}"
+            self._list_events.item(index).setText(
+                f"[{index}] {event.click_type} {event.button}  "
+                f"({event.rel_x}, {event.rel_y}){ocr_info}"
+            )
 
     def _on_playback_event(self, index: int, event: ClickEvent) -> None:
         self._list_events.addItem(

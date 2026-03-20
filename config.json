@@ -1,6 +1,6 @@
 {
-  "ocr_server": {
-    "host": "0.0.0.0",
-    "port": 17089
+  "kimi": {
+    "api_key": "",
+    "base_url": "https://api.moonshot.cn/v1"
   }
 }

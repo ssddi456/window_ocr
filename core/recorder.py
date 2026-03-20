@@ -20,12 +20,14 @@ class Recorder:
 
     def __init__(self, session: Session,
                  on_event: Optional[Callable[[ClickEvent], None]] = None,
+                 on_event_updated: Optional[Callable[[int, ClickEvent], None]] = None,
                  on_auto_stop: Optional[Callable[[], None]] = None,
                  self_hwnd: Optional[int] = None):
         self.session = session
-        self.on_event = on_event  # UI callback
-        self.on_auto_stop = on_auto_stop  # called when tool window gains focus
-        self._self_hwnd = self_hwnd  # HWND of our own tool window
+        self.on_event = on_event  # called immediately when event is recorded
+        self.on_event_updated = on_event_updated  # called when OCR result arrives
+        self.on_auto_stop = on_auto_stop
+        self._self_hwnd = self_hwnd
         self._listener: Optional[mouse.Listener] = None
         self._running = False
         self._fg_thread: Optional[threading.Thread] = None
@@ -117,15 +119,26 @@ class Recorder:
             timestamp=time.time(),
         )
 
-        # capture screenshot + OCR in background
+        # 1) immediately persist event (no screenshot/OCR yet)
+        idx = self.session.add_event(event)
+        self.session.save()
+
+        if self.on_event:
+            self.on_event(event)
+
+        # 2) screenshot + OCR in background, will update event in-place
         threading.Thread(
             target=self._capture_and_ocr,
-            args=(event,),
+            args=(idx,),
             daemon=True,
         ).start()
 
-    def _capture_and_ocr(self, event: ClickEvent) -> None:
+    def _capture_and_ocr(self, event_idx: int) -> None:
+        """Background: capture screenshot, then run OCR, updating the event."""
+        event = self.session.meta.events[event_idx]
         filepath = None
+
+        # ── screenshot ────────────────────────────────────────
         try:
             hwnd = self.session.meta.window_hwnd
             rect = get_window_rect(hwnd)
@@ -137,24 +150,30 @@ class Recorder:
             }
             with mss.mss() as sct:
                 sct_img = sct.grab(monitor)
-            idx = len(self.session.meta.events)
-            filename = f"click_{idx:04d}.png"
+            filename = f"click_{event_idx:04d}.png"
             filepath = self.session.screenshots_dir / filename
             mss.tools.to_png(sct_img.rgb, sct_img.size, output=str(filepath))
-            event.screenshot_path = f"screenshots/{filename}"
+            self.session.update_event(
+                event_idx, screenshot_path=f"screenshots/{filename}"
+            )
+            self.session.save()
         except Exception as e:
             print(f"[Recorder] screenshot error: {e}")
 
-        # run OCR on the captured screenshot
+        # ── OCR ───────────────────────────────────────────────
         if filepath and filepath.exists():
             try:
                 result = ocr_engine.ocr(str(filepath))
                 if result:
-                    event.ocr_text = result.get("full_text")
-                    event.ocr_result = result.get("blocks")
+                    self.session.update_event(
+                        event_idx,
+                        ocr_text=result.get("full_text"),
+                        ocr_result=result.get("blocks"),
+                    )
+                    self.session.save()
+                    if self.on_event_updated:
+                        self.on_event_updated(
+                            event_idx, self.session.meta.events[event_idx]
+                        )
             except Exception as e:
                 print(f"[Recorder] OCR error: {e}")
-
-        self.session.add_event(event)
-        if self.on_event:
-            self.on_event(event)

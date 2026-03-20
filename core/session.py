@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 from pathlib import Path
 
 from models.events import ClickEvent, SessionMeta
@@ -18,6 +19,7 @@ class Session:
         self.base_dir = base_dir or SESSIONS_DIR
         self.session_dir = self.base_dir / self.meta.session_id
         self.screenshots_dir = self.session_dir / "screenshots"
+        self._lock = threading.Lock()
 
     # ── creation ──────────────────────────────────────────────
 
@@ -37,15 +39,29 @@ class Session:
 
     # ── persistence ───────────────────────────────────────────
 
-    def add_event(self, event: ClickEvent) -> None:
-        self.meta.events.append(event)
+    def add_event(self, event: ClickEvent) -> int:
+        """Append event and return its index. Thread-safe."""
+        with self._lock:
+            idx = len(self.meta.events)
+            self.meta.events.append(event)
+            return idx
+
+    def update_event(self, index: int, **fields) -> None:
+        """Update fields of an existing event by index. Thread-safe."""
+        with self._lock:
+            if 0 <= index < len(self.meta.events):
+                event = self.meta.events[index]
+                for k, v in fields.items():
+                    setattr(event, k, v)
 
     def save(self) -> Path:
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-        path = self.session_dir / "session.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.meta.to_dict(), f, ensure_ascii=False, indent=2)
-        return path
+        """Write session.json to disk. Thread-safe."""
+        with self._lock:
+            self.session_dir.mkdir(parents=True, exist_ok=True)
+            path = self.session_dir / "session.json"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.meta.to_dict(), f, ensure_ascii=False, indent=2)
+            return path
 
     @classmethod
     def load(cls, session_dir: str | Path) -> Session:

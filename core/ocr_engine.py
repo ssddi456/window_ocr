@@ -1,9 +1,7 @@
-"""OCR client — sends images to PaddleOCR HTTP server for recognition."""
+"""OCR engine — uses Kimi (Moonshot) file-extract API for image recognition."""
 from __future__ import annotations
 
 import json
-import urllib.request
-import urllib.error
 from pathlib import Path
 from typing import Optional
 
@@ -13,8 +11,8 @@ CONFIG_LOCAL_PATH = CONFIG_DIR / "config.local.json"
 
 
 def load_config() -> dict:
-    """Load config, preferring config.local.json over config.json."""
-    cfg = {}
+    """Load config, merging config.local.json over config.json."""
+    cfg: dict = {}
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -25,7 +23,6 @@ def load_config() -> dict:
         try:
             with open(CONFIG_LOCAL_PATH, "r", encoding="utf-8") as f:
                 local = json.load(f)
-            # merge top-level keys, with local overriding
             for k, v in local.items():
                 if isinstance(v, dict) and isinstance(cfg.get(k), dict):
                     cfg[k].update(v)
@@ -37,104 +34,92 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    """Save config to config.local.json."""
+    """Save config to config.local.json (keeps secrets out of config.json)."""
     with open(CONFIG_LOCAL_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
 
 
-def _load_server_url() -> str:
-    """Read OCR server address from config."""
-    host = "127.0.0.1"
-    port = 8089
-    cfg = load_config()
-    srv = cfg.get("ocr_server", {})
-    host = srv.get("host", host)
-    port = srv.get("port", port)
-    return f"http://{host}:{port}"
-
-
 class OCREngine:
-    """HTTP client for the PaddleOCR server."""
+    """OCR via Kimi (Moonshot) file-extract API.
+
+    Uses the OpenAI-compatible SDK to upload images and extract text.
+    API key is stored in config.local.json for security.
+    """
 
     def __init__(self) -> None:
-        self._server_url = _load_server_url()
+        self._client = None
+        self._api_key: str = ""
+        self._base_url: str = ""
+        self.reload_config()
 
     def reload_config(self) -> None:
-        self._server_url = _load_server_url()
+        cfg = load_config()
+        kimi = cfg.get("kimi", {})
+        self._api_key = kimi.get("api_key", "")
+        self._base_url = kimi.get("base_url", "https://api.moonshot.cn/v1")
+        self._client = None  # reset
 
-    @property
-    def server_url(self) -> str:
-        return self._server_url
-
-    # ── health check ──────────────────────────────────────────
-
-    def check_health(self) -> dict:
-        """Ping the OCR server. Returns {"status": "ok", ...} or error info."""
-        try:
-            url = f"{self._server_url}/health"
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                return json.loads(resp.read().decode())
-        except urllib.error.URLError as e:
-            return {"status": "unreachable", "error": str(e)}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
+    def _get_client(self):
+        if self._client is None:
+            from openai import OpenAI
+            self._client = OpenAI(
+                api_key=self._api_key,
+                base_url=self._base_url,
+            )
+        return self._client
 
     @property
     def available(self) -> bool:
-        return self.check_health().get("status") == "ok"
+        return bool(self._api_key)
 
-    # ── OCR request ───────────────────────────────────────────
+    @property
+    def status_text(self) -> str:
+        if not self._api_key:
+            return "❌ 未配置 API Key（请在界面中填写并保存）"
+        masked = self._api_key[:8] + "..." + self._api_key[-4:]
+        return f"✅ Kimi 文件内容提取  |  Key: {masked}"
 
     def ocr(self, image_path: str) -> Optional[dict]:
-        """Send an image to the OCR server.
+        """Upload image to Kimi file-extract API.
 
-        Returns dict with keys: full_text, blocks[{text, confidence, bbox}]
-        or None on failure.
+        Returns dict: {success, full_text, blocks[{text}]} or None.
         """
+        if not self._api_key:
+            return None
         try:
             path = Path(image_path)
             if not path.exists():
                 return None
 
-            # build multipart/form-data body
-            boundary = "----PaddleOCRBoundary"
-            body = (
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="file"; '
-                f'filename="{path.name}"\r\n'
-                f"Content-Type: application/octet-stream\r\n\r\n"
-            ).encode()
-            body += path.read_bytes()
-            body += f"\r\n--{boundary}--\r\n".encode()
-
-            url = f"{self._server_url}/ocr"
-            req = urllib.request.Request(
-                url, data=body, method="POST",
-                headers={
-                    "Content-Type": f"multipart/form-data; boundary={boundary}",
-                },
+            client = self._get_client()
+            file_object = client.files.create(
+                file=path, purpose="file-extract"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read().decode())
+            raw_text = client.files.content(file_id=file_object.id).text
 
-            if result.get("success"):
-                return result
-            else:
-                print(f"[OCR] Server error: {result.get('error')}")
-                return None
+            # API returns JSON: {"content":"...", "file_type":"...", ...}
+            try:
+                data = json.loads(raw_text)
+                full_text = data.get("content", raw_text)
+            except (json.JSONDecodeError, TypeError):
+                full_text = raw_text
 
+            lines = [line for line in full_text.split("\n") if line.strip()]
+            blocks = [{"text": line} for line in lines]
+
+            return {
+                "success": True,
+                "full_text": full_text,
+                "blocks": blocks,
+            }
         except Exception as e:
-            print(f"[OCR] Request failed: {e}")
+            print(f"[OCR] Kimi file-extract error: {e}")
             return None
 
     def ocr_text(self, image_path: str) -> Optional[str]:
-        """Convenience: return just the full_text string."""
         result = self.ocr(image_path)
-        if result:
-            return result.get("full_text")
-        return None
+        return result.get("full_text") if result else None
 
 
-# singleton instance
+# singleton
 ocr_engine = OCREngine()
