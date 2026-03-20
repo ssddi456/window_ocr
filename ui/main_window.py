@@ -8,14 +8,15 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QListWidget, QListWidgetItem,
-    QMessageBox, QGroupBox, QStatusBar, QSplitter,
+    QMessageBox, QGroupBox, QStatusBar, QSplitter, QLineEdit,
+    QSpinBox,
 )
 
 from core.window_selector import WindowInfo, enumerate_windows
 from core.session import Session
 from core.recorder import Recorder
 from core.player import Player
-from core.ocr_engine import ocr_engine
+from core.ocr_engine import ocr_engine, load_config, save_config
 from models.events import ClickEvent
 
 
@@ -75,13 +76,35 @@ class MainWindow(QMainWindow):
 
         # -- OCR status --
         ocr_group = QGroupBox("OCR 引擎 (PaddleOCR)")
-        ocr_layout = QHBoxLayout(ocr_group)
+        ocr_layout = QVBoxLayout(ocr_group)
+
+        status_row = QHBoxLayout()
         self._lbl_ocr_status = QLabel("检测中...")
-        ocr_layout.addWidget(self._lbl_ocr_status, 1)
+        status_row.addWidget(self._lbl_ocr_status, 1)
         self._btn_ocr_check = QPushButton("检测连接")
         self._btn_ocr_check.clicked.connect(self._detect_ocr_status)
-        ocr_layout.addWidget(self._btn_ocr_check)
+        status_row.addWidget(self._btn_ocr_check)
+        ocr_layout.addLayout(status_row)
+
+        # OCR server config
+        cfg_row = QHBoxLayout()
+        cfg_row.addWidget(QLabel("Host:"))
+        self._edit_host = QLineEdit()
+        self._edit_host.setMaximumWidth(200)
+        cfg_row.addWidget(self._edit_host)
+        cfg_row.addWidget(QLabel("Port:"))
+        self._spin_port = QSpinBox()
+        self._spin_port.setRange(1, 65535)
+        self._spin_port.setMaximumWidth(100)
+        cfg_row.addWidget(self._spin_port)
+        self._btn_save_config = QPushButton("保存配置")
+        self._btn_save_config.clicked.connect(self._save_ocr_config)
+        cfg_row.addWidget(self._btn_save_config)
+        cfg_row.addStretch()
+        ocr_layout.addLayout(cfg_row)
+
         layout.addWidget(ocr_group)
+        self._load_config_to_ui()
         self._detect_ocr_status()
 
         # -- controls --
@@ -129,6 +152,25 @@ class MainWindow(QMainWindow):
         self._refresh_sessions()
 
     # ── OCR status ─────────────────────────────────────────────
+
+    def _load_config_to_ui(self) -> None:
+        cfg = load_config()
+        srv = cfg.get("ocr_server", {})
+        self._edit_host.setText(srv.get("host", "127.0.0.1"))
+        self._spin_port.setValue(srv.get("port", 8089))
+
+    def _save_ocr_config(self) -> None:
+        host = self._edit_host.text().strip()
+        port = self._spin_port.value()
+        if not host:
+            QMessageBox.warning(self, "提示", "Host 不能为空")
+            return
+        cfg = load_config()
+        cfg["ocr_server"] = {"host": host, "port": port}
+        save_config(cfg)
+        ocr_engine.reload_config()
+        self._status.showMessage(f"配置已保存到 config.local.json  ({host}:{port})")
+        self._detect_ocr_status()
 
     def _detect_ocr_status(self) -> None:
         health = ocr_engine.check_health()

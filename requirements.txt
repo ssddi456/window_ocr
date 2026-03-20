@@ -5,6 +5,11 @@ pyautogui>=0.9.54
 pywin32>=306
 Pillow>=10.0.0
 fastapi>=0.115.0
-uvicorn>=0.30.0
+waitress>=3.0.0
+a2wsgi>=1.10.0
 python-multipart>=0.0.9
 paddleocr[all]
+
+# optional: GPU acceleration (uncomment one)
+# paddlepaddle-gpu>=3.0.0    # CUDA 11.x / 12.x
+# paddlepaddle>=3.0.0        # CPU only

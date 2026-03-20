@@ -11,24 +11,49 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
+import sys
 import tempfile
 import time
 from pathlib import Path
 
-import uvicorn
+# ── pythonw compatibility: redirect stdio to log file ─────────
+LOG_DIR = Path(__file__).resolve().parent
+LOG_FILE = LOG_DIR / "ocr_server.log"
+
+if sys.stdout is None or sys.stderr is None:
+    _log_fh = open(LOG_FILE, "a", encoding="utf-8")
+    if sys.stdout is None:
+        sys.stdout = _log_fh
+    if sys.stderr is None:
+        sys.stderr = _log_fh
+
+from a2wsgi import ASGIMiddleware
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 
 # ── load config ───────────────────────────────────────────────
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
+CONFIG_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = CONFIG_DIR / "config.json"
+CONFIG_LOCAL_PATH = CONFIG_DIR / "config.local.json"
 
 
 def load_config() -> dict:
+    cfg = {}
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+            cfg = json.load(f)
+    if CONFIG_LOCAL_PATH.exists():
+        with open(CONFIG_LOCAL_PATH, "r", encoding="utf-8") as f:
+            local = json.load(f)
+        for k, v in local.items():
+            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                cfg[k].update(v)
+            else:
+                cfg[k] = v
+    return cfg
 
 
 config = load_config()
@@ -147,14 +172,23 @@ def main():
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
 
-    print(f"[OCR Server] Starting on {args.host}:{args.port}")
-    print(f"[OCR Server] POST /ocr  — upload image for OCR")
-    print(f"[OCR Server] GET  /health — health check")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=sys.stderr,
+    )
+    log = logging.getLogger("ocr_server")
+
+    log.info("Starting on %s:%s", args.host, args.port)
+    log.info("POST /ocr  — upload image for OCR")
+    log.info("GET  /health — health check")
 
     # pre-load the engine
     get_ocr_engine()
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    from waitress import serve
+    wsgi_app = ASGIMiddleware(app)
+    serve(wsgi_app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

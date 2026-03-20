@@ -7,22 +7,49 @@ import urllib.error
 from pathlib import Path
 from typing import Optional
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
+CONFIG_DIR = Path(__file__).resolve().parent.parent
+CONFIG_PATH = CONFIG_DIR / "config.json"
+CONFIG_LOCAL_PATH = CONFIG_DIR / "config.local.json"
 
 
-def _load_server_url() -> str:
-    """Read OCR server address from config.json."""
-    host = "127.0.0.1"
-    port = 8089
+def load_config() -> dict:
+    """Load config, preferring config.local.json over config.json."""
+    cfg = {}
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            srv = cfg.get("ocr_server", {})
-            host = srv.get("host", host)
-            port = srv.get("port", port)
         except Exception:
             pass
+    if CONFIG_LOCAL_PATH.exists():
+        try:
+            with open(CONFIG_LOCAL_PATH, "r", encoding="utf-8") as f:
+                local = json.load(f)
+            # merge top-level keys, with local overriding
+            for k, v in local.items():
+                if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                    cfg[k].update(v)
+                else:
+                    cfg[k] = v
+        except Exception:
+            pass
+    return cfg
+
+
+def save_config(cfg: dict) -> None:
+    """Save config to config.local.json."""
+    with open(CONFIG_LOCAL_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+def _load_server_url() -> str:
+    """Read OCR server address from config."""
+    host = "127.0.0.1"
+    port = 8089
+    cfg = load_config()
+    srv = cfg.get("ocr_server", {})
+    host = srv.get("host", host)
+    port = srv.get("port", port)
     return f"http://{host}:{port}"
 
 
