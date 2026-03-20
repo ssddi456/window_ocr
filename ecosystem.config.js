@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "ocr-server",
       script: "ocr_server.py",
-      interpreter: "pythonw",
+      interpreter: "./venv/Scripts/pythonw.exe",
       cwd: __dirname,
       watch: false,
       autorestart: true,
