@@ -16,7 +16,9 @@ from core.session import Session
 from core.recorder import Recorder
 from core.player import Player
 from core.ocr_engine import ocr_engine, load_config, save_config
+from core.ocr_monitor import OCRMonitor
 from models.events import ClickEvent
+from ui.ocr_overlay import OCROverlay
 
 
 class _Signals(QObject):
@@ -26,6 +28,8 @@ class _Signals(QObject):
     playback_event = pyqtSignal(int, object)  # index, ClickEvent
     playback_done = pyqtSignal()
     recording_auto_stopped = pyqtSignal()  # when tool window gains focus
+    ocr_result = pyqtSignal(str)  # OCR monitor result text
+    ocr_error = pyqtSignal(str)  # OCR monitor error
 
 
 class MainWindow(QMainWindow):
@@ -40,11 +44,15 @@ class MainWindow(QMainWindow):
         self._signals.playback_event.connect(self._on_playback_event)
         self._signals.playback_done.connect(self._on_playback_done)
         self._signals.recording_auto_stopped.connect(self._on_recording_auto_stopped)
+        self._signals.ocr_result.connect(self._on_ocr_result)
+        self._signals.ocr_error.connect(self._on_ocr_error)
 
         self._windows: list[WindowInfo] = []
         self._selected_window: Optional[WindowInfo] = None
         self._recorder: Optional[Recorder] = None
         self._player: Optional[Player] = None
+        self._ocr_monitor: Optional[OCRMonitor] = None
+        self._ocr_overlay: Optional[OCROverlay] = None
 
         self._build_ui()
         self._update_state()
@@ -108,6 +116,10 @@ class MainWindow(QMainWindow):
         self._btn_play = QPushButton("▶ 回放")
         self._btn_play.clicked.connect(self._toggle_playback)
         ctrl_layout.addWidget(self._btn_play)
+
+        self._btn_ocr_mode = QPushButton("🔍 OCR 模式")
+        self._btn_ocr_mode.clicked.connect(self._toggle_ocr_mode)
+        ctrl_layout.addWidget(self._btn_ocr_mode)
 
         layout.addWidget(ctrl_group)
 
@@ -322,19 +334,69 @@ class MainWindow(QMainWindow):
         self._refresh_sessions()
         self._update_state()
 
+    # ── OCR mode ──────────────────────────────────────────────
+
+    def _toggle_ocr_mode(self) -> None:
+        if self._ocr_monitor and self._ocr_monitor.is_running:
+            self._stop_ocr_mode()
+        else:
+            self._start_ocr_mode()
+
+    def _start_ocr_mode(self) -> None:
+        if not self._selected_window:
+            QMessageBox.warning(self, "提示", "请先选择目标窗口")
+            return
+        if not ocr_engine.available:
+            QMessageBox.warning(self, "提示", "请先配置 OCR API Key")
+            return
+
+        w = self._selected_window
+        self._ocr_monitor = OCRMonitor(
+            hwnd=w.hwnd,
+            interval=3.0,
+            on_result=lambda text: self._signals.ocr_result.emit(text),
+            on_error=lambda err: self._signals.ocr_error.emit(err),
+        )
+        self._ocr_overlay = OCROverlay(w.hwnd)
+        self._ocr_overlay.show()
+        self._ocr_monitor.start()
+        self._status.showMessage(f"OCR 模式运行中 — {w.title}")
+        self._update_state()
+
+    def _stop_ocr_mode(self) -> None:
+        if self._ocr_monitor:
+            self._ocr_monitor.stop()
+            self._ocr_monitor = None
+        if self._ocr_overlay:
+            self._ocr_overlay.close()
+            self._ocr_overlay = None
+        self._status.showMessage("OCR 模式已停止")
+        self._update_state()
+
+    def _on_ocr_result(self, text: str) -> None:
+        if self._ocr_overlay:
+            self._ocr_overlay.set_text(text)
+
+    def _on_ocr_error(self, err: str) -> None:
+        self._status.showMessage(f"OCR 错误: {err}")
+
     # ── button state management ───────────────────────────────
 
     def _update_state(self) -> None:
         recording = self._recorder is not None and self._recorder.is_running
         playing = self._player is not None and self._player.is_running
+        ocr_mode = self._ocr_monitor is not None and self._ocr_monitor.is_running
         has_window = self._selected_window is not None
         has_session = self._list_sessions.currentItem() is not None
 
-        self._btn_record.setEnabled(has_window and not playing)
+        self._btn_record.setEnabled(has_window and not playing and not ocr_mode)
         self._btn_record.setText("⏹ 停止录制" if recording else "▶ 开始录制")
 
-        self._btn_play.setEnabled(has_session and not recording)
+        self._btn_play.setEnabled(has_session and not recording and not ocr_mode)
         self._btn_play.setText("⏹ 停止回放" if playing else "▶ 回放")
 
-        self._combo_windows.setEnabled(not recording and not playing)
-        self._btn_refresh.setEnabled(not recording and not playing)
+        self._btn_ocr_mode.setEnabled(has_window and not recording and not playing)
+        self._btn_ocr_mode.setText("⏹ 停止 OCR" if ocr_mode else "🔍 OCR 模式")
+
+        self._combo_windows.setEnabled(not recording and not playing and not ocr_mode)
+        self._btn_refresh.setEnabled(not recording and not playing and not ocr_mode)
