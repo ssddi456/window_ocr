@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QGroupBox, QStatusBar, QSplitter, QLineEdit,
 )
 
-from core.window_selector import WindowInfo, enumerate_windows
+from core.window_selector import WindowInfo, enumerate_windows, bring_window_to_front
 from core.session import Session
 from core.recorder import Recorder
 from core.player import Player
@@ -30,6 +30,8 @@ class _Signals(QObject):
     recording_auto_stopped = pyqtSignal()  # when tool window gains focus
     ocr_result = pyqtSignal(str)  # OCR monitor result text
     ocr_error = pyqtSignal(str)  # OCR monitor error
+    ocr_capture_started = pyqtSignal()
+    ocr_capture_finished = pyqtSignal()
 
 
 class MainWindow(QMainWindow):
@@ -46,6 +48,8 @@ class MainWindow(QMainWindow):
         self._signals.recording_auto_stopped.connect(self._on_recording_auto_stopped)
         self._signals.ocr_result.connect(self._on_ocr_result)
         self._signals.ocr_error.connect(self._on_ocr_error)
+        self._signals.ocr_capture_started.connect(self._on_ocr_capture_started)
+        self._signals.ocr_capture_finished.connect(self._on_ocr_capture_finished)
 
         self._windows: list[WindowInfo] = []
         self._selected_window: Optional[WindowInfo] = None
@@ -351,11 +355,14 @@ class MainWindow(QMainWindow):
             return
 
         w = self._selected_window
+        bring_window_to_front(w.hwnd)
         self._ocr_monitor = OCRMonitor(
             hwnd=w.hwnd,
             interval=3.0,
             on_result=lambda text: self._signals.ocr_result.emit(text),
             on_error=lambda err: self._signals.ocr_error.emit(err),
+            before_capture=lambda: self._signals.ocr_capture_started.emit(),
+            after_capture=lambda: self._signals.ocr_capture_finished.emit(),
         )
         self._ocr_overlay = OCROverlay(w.hwnd)
         self._ocr_overlay.show()
@@ -379,6 +386,14 @@ class MainWindow(QMainWindow):
 
     def _on_ocr_error(self, err: str) -> None:
         self._status.showMessage(f"OCR 错误: {err}")
+
+    def _on_ocr_capture_started(self) -> None:
+        if self._ocr_overlay:
+            self._ocr_overlay.begin_capture()
+
+    def _on_ocr_capture_finished(self) -> None:
+        if self._ocr_overlay:
+            self._ocr_overlay.end_capture()
 
     # ── button state management ───────────────────────────────
 

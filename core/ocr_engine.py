@@ -106,7 +106,6 @@ class OCREngine:
 
             lines = [line for line in full_text.split("\n") if line.strip()]
             blocks = [{"text": line} for line in lines]
-
             return {
                 "success": True,
                 "full_text": full_text,

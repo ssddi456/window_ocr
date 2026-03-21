@@ -24,11 +24,15 @@ class OCRMonitor:
         interval: float = 3.0,
         on_result: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
+        before_capture: Optional[Callable[[], None]] = None,
+        after_capture: Optional[Callable[[], None]] = None,
     ):
         self._hwnd = hwnd
         self._interval = interval
         self.on_result = on_result
         self.on_error = on_error
+        self.before_capture = before_capture
+        self.after_capture = after_capture
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._tmp_dir = tempfile.mkdtemp(prefix="ocr_monitor_")
@@ -79,8 +83,16 @@ class OCRMonitor:
             return
 
         # capture
-        with mss.mss() as sct:
-            sct_img = sct.grab(monitor)
+        if self.before_capture:
+            self.before_capture()
+            time.sleep(0.08)
+
+        try:
+            with mss.mss() as sct:
+                sct_img = sct.grab(monitor)
+        finally:
+            if self.after_capture:
+                self.after_capture()
 
         filepath = Path(self._tmp_dir) / f"ocr_{counter:06d}.png"
         mss.tools.to_png(sct_img.rgb, sct_img.size, output=str(filepath))
@@ -91,8 +103,15 @@ class OCRMonitor:
         # remove temp file immediately
         try:
             filepath.unlink()
+            pass
         except Exception:
             pass
 
-        if result and result.get("full_text") and self.on_result:
-            self.on_result(result["full_text"])
+        if not self.on_result:
+            return
+
+        full_text = ""
+        if result:
+            full_text = str(result.get("full_text") or "")
+
+        self.on_result(full_text)
