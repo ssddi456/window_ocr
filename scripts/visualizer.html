@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI Elements Visualizer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+  }
+
+  /* ---------- toolbar ---------- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px;
+    background: #16213e; border-bottom: 1px solid #0f3460;
+  }
+  .toolbar h1 { font-size: 16px; font-weight: 600; margin-right: 12px; white-space: nowrap; }
+  .toolbar label {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 6px;
+    background: #0f3460; cursor: pointer; font-size: 13px;
+    transition: background .2s;
+  }
+  .toolbar label:hover { background: #1a5276; }
+  .toolbar label input[type="file"] { display: none; }
+  .toolbar .sep { width: 1px; height: 24px; background: #0f3460; }
+
+  /* filter chips */
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 8px 20px;
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+  }
+  .chip {
+    padding: 3px 10px; border-radius: 12px; font-size: 12px;
+    background: #0f3460; cursor: pointer; user-select: none;
+    border: 1px solid transparent; transition: all .15s;
+  }
+  .chip.active { background: #e94560; border-color: #e94560; }
+  .chip:hover { opacity: .85; }
+
+  /* ---------- canvas area ---------- */
+  .canvas-wrap {
+    position: relative;
+    display: inline-block;
+    margin: 20px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.5);
+  }
+  .canvas-wrap img {
+    display: block;
+    max-width: calc(100vw - 40px);
+    height: auto;
+  }
+
+  /* bbox overlay */
+  .bbox {
+    position: absolute;
+    border: 2px solid;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  .bbox:hover { opacity: 1 !important; }
+  .bbox:hover .bbox-label { opacity: 1; }
+
+  .bbox-label {
+    position: absolute; bottom: 100%; left: -2px;
+    padding: 2px 6px;
+    font-size: 11px; line-height: 1.4;
+    white-space: nowrap;
+    color: #fff;
+    border-radius: 3px 3px 0 0;
+    pointer-events: none;
+    opacity: 0; transition: opacity .15s;
+  }
+  .bbox.selected .bbox-label { opacity: 1; }
+  .bbox.show-all-labels .bbox-label { opacity: .85; }
+
+  /* ---------- detail panel ---------- */
+  .detail-panel {
+    position: fixed; right: 0; top: 0; bottom: 0;
+    width: 340px; background: #16213e; padding: 60px 16px 16px;
+    overflow-y: auto; transform: translateX(100%);
+    transition: transform .25s; z-index: 90;
+    border-left: 1px solid #0f3460;
+  }
+  .detail-panel.open { transform: translateX(0); }
+  .detail-panel h3 { margin-bottom: 12px; font-size: 15px; color: #e94560; }
+  .detail-panel table { width: 100%; font-size: 13px; border-collapse: collapse; }
+  .detail-panel td { padding: 5px 4px; vertical-align: top; }
+  .detail-panel td:first-child { color: #999; width: 70px; }
+  .detail-panel .close-btn {
+    position: absolute; top: 12px; right: 12px;
+    background: none; border: none; color: #eee; font-size: 20px; cursor: pointer;
+  }
+
+  /* ---------- drop zone ---------- */
+  .drop-zone {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: calc(100vh - 100px);
+    color: #555; font-size: 18px; text-align: center; gap: 16px;
+  }
+  .drop-zone.drag-over { background: rgba(233,69,96,.08); }
+  .drop-zone svg { opacity: .3; }
+
+  /* toggle */
+  .toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  .toggle input { accent-color: #e94560; }
+
+  /* stats */
+  .stats { font-size: 12px; color: #888; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>🔍 UI Visualizer</h1>
+  <label>📷 加载图片<input type="file" id="imageInput" accept="image/*"></label>
+  <label>📄 加载 JSON<input type="file" id="jsonInput" accept=".json,application/json"></label>
+  <div class="sep"></div>
+  <label class="toggle"><input type="checkbox" id="toggleLabels"> 显示全部标签</label>
+  <label class="toggle"><input type="checkbox" id="toggleInteractive" checked> 仅可交互</label>
+  <div class="sep"></div>
+  <span class="stats" id="stats"></span>
+</div>
+<div class="filter-bar" id="filterBar"></div>
+
+<div id="dropZone" class="drop-zone">
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+    <polyline points="17 8 12 3 7 8"/>
+    <line x1="12" y1="3" x2="12" y2="15"/>
+  </svg>
+  <p>拖放图片和 JSON 文件到此处<br>或使用上方按钮加载</p>
+</div>
+
+<div class="canvas-wrap" id="canvasWrap" style="display:none">
+  <img id="baseImage">
+  <div id="bboxLayer"></div>
+</div>
+
+<div class="detail-panel" id="detailPanel">
+  <button class="close-btn" id="closeDetail">&times;</button>
+  <h3 id="detailTitle"></h3>
+  <table id="detailTable"></table>
+</div>
+
+<script>
+// ========== State ==========
+let imageLoaded = false;
+let jsonData = null;       // parsed JSON { image_width, image_height, elements }
+let scaleX = 1, scaleY = 1;
+let selectedId = null;
+let activeTypes = new Set(); // empty = show all
+
+// Color palette for element types
+const TYPE_COLORS = {
+  button:       '#e94560',
+  input:        '#0f9b58',
+  label:        '#4285f4',
+  icon:         '#f4b400',
+  checkbox:     '#ab47bc',
+  radio:        '#ab47bc',
+  slider:       '#00acc1',
+  tab:          '#ff7043',
+  menu_item:    '#8d6e63',
+  dropdown:     '#26a69a',
+  toolbar:      '#78909c',
+  statusbar:    '#78909c',
+  scrollbar:    '#546e7a',
+  image:        '#ec407a',
+  link:         '#29b6f6',
+  progress_bar: '#66bb6a',
+  tooltip:      '#ffa726',
+  dialog:       '#7e57c2',
+  panel:        '#5c6bc0',
+  list_item:    '#26c6da',
+  tree_item:    '#9ccc65',
+  table_cell:   '#d4e157',
+  other:        '#bdbdbd',
+};
+
+function getColor(type) {
+  return TYPE_COLORS[type] || TYPE_COLORS.other;
+}
+
+// ========== DOM refs ==========
+const imageInput     = document.getElementById('imageInput');
+const jsonInput      = document.getElementById('jsonInput');
+const dropZone       = document.getElementById('dropZone');
+const canvasWrap     = document.getElementById('canvasWrap');
+const baseImage      = document.getElementById('baseImage');
+const bboxLayer      = document.getElementById('bboxLayer');
+const detailPanel    = document.getElementById('detailPanel');
+const detailTitle    = document.getElementById('detailTitle');
+const detailTable    = document.getElementById('detailTable');
+const closeDetail    = document.getElementById('closeDetail');
+const toggleLabels   = document.getElementById('toggleLabels');
+const toggleInteractive = document.getElementById('toggleInteractive');
+const filterBar      = document.getElementById('filterBar');
+const statsEl        = document.getElementById('stats');
+
+// ========== File loading ==========
+imageInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadImage(e.target.files[0]);
+});
+jsonInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadJSON(e.target.files[0]);
+});
+
+function loadImage(file) {
+  const url = URL.createObjectURL(file);
+  baseImage.onload = () => {
+    imageLoaded = true;
+    dropZone.style.display = 'none';
+    canvasWrap.style.display = 'inline-block';
+    recalcScale();
+    render();
+  };
+  baseImage.src = url;
+}
+
+function loadJSON(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let text = e.target.result.trim();
+      // Strip markdown code fences if present
+      if (text.startsWith('```')) {
+        text = text.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+      jsonData = JSON.parse(text);
+      buildFilterBar();
+      recalcScale();
+      render();
+    } catch (err) {
+      alert('JSON 解析失败: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ========== Drag & Drop ==========
+document.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+document.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  for (const file of e.dataTransfer.files) {
+    if (file.type.startsWith('image/')) loadImage(file);
+    else if (file.name.endsWith('.json') || file.type === 'application/json') loadJSON(file);
+  }
+});
+
+// ========== Scale ==========
+function recalcScale() {
+  if (!imageLoaded || !jsonData) return;
+  const displayW = baseImage.clientWidth;
+  const displayH = baseImage.clientHeight;
+  scaleX = displayW / jsonData.image_width;
+  scaleY = displayH / jsonData.image_height;
+}
+window.addEventListener('resize', () => { recalcScale(); render(); });
+
+// ========== Filter bar ==========
+function buildFilterBar() {
+  if (!jsonData) return;
+  const types = [...new Set(jsonData.elements.map(e => e.type))].sort();
+  filterBar.innerHTML = '';
+  types.forEach(type => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = type;
+    chip.style.borderColor = getColor(type);
+    chip.addEventListener('click', () => {
+      if (activeTypes.has(type)) { activeTypes.delete(type); chip.classList.remove('active'); }
+      else { activeTypes.add(type); chip.classList.add('active'); chip.style.background = getColor(type); }
+      render();
+    });
+    filterBar.appendChild(chip);
+  });
+}
+
+// ========== Render ==========
+function render() {
+  bboxLayer.innerHTML = '';
+  if (!jsonData || !imageLoaded) return;
+
+  const showAllLabels = toggleLabels.checked;
+  const interactiveOnly = toggleInteractive.checked;
+
+  let visibleCount = 0;
+
+  jsonData.elements.forEach(el => {
+    // Filters
+    if (activeTypes.size > 0 && !activeTypes.has(el.type)) return;
+    if (interactiveOnly && el.interactive === false) return;
+
+    visibleCount++;
+    const color = getColor(el.type);
+    const b = el.bbox;
+
+    const div = document.createElement('div');
+    div.className = 'bbox' + (showAllLabels ? ' show-all-labels' : '') + (el.id === selectedId ? ' selected' : '');
+    div.style.left   = (b.x * scaleX) + 'px';
+    div.style.top    = (b.y * scaleY) + 'px';
+    div.style.width  = (b.width * scaleX) + 'px';
+    div.style.height = (b.height * scaleY) + 'px';
+    div.style.borderColor = color;
+    div.style.background  = color + '18';
+
+    // Label
+    const lbl = document.createElement('span');
+    lbl.className = 'bbox-label';
+    lbl.style.background = color;
+    lbl.textContent = `#${el.id} ${el.type}` + (el.label ? ` "${el.label}"` : '');
+    div.appendChild(lbl);
+
+    div.addEventListener('click', e => { e.stopPropagation(); selectElement(el); });
+    bboxLayer.appendChild(div);
+  });
+
+  statsEl.textContent = `${visibleCount} / ${jsonData.elements.length} elements`;
+}
+
+toggleLabels.addEventListener('change', render);
+toggleInteractive.addEventListener('change', render);
+
+// ========== Detail panel ==========
+function selectElement(el) {
+  selectedId = el.id;
+  detailTitle.textContent = `#${el.id}  ${el.type}`;
+  detailTitle.style.color = getColor(el.type);
+
+  const rows = [
+    ['Type',        el.type],
+    ['Label',       el.label || '—'],
+    ['Purpose',     el.purpose || '—'],
+    ['Position',    `x: ${el.bbox.x},  y: ${el.bbox.y}`],
+    ['Size',        `${el.bbox.width} × ${el.bbox.height}`],
+    ['Interactive', el.interactive ? '✅ Yes' : '❌ No'],
+    ['State',       el.state || '—'],
+  ];
+  detailTable.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+
+  detailPanel.classList.add('open');
+  render();
+}
+
+closeDetail.addEventListener('click', () => { detailPanel.classList.remove('open'); selectedId = null; render(); });
+document.addEventListener('click', e => {
+  if (!detailPanel.contains(e.target) && !e.target.closest('.bbox')) {
+    detailPanel.classList.remove('open');
+    selectedId = null;
+    render();
+  }
+});
+
+// ========== Paste JSON from clipboard ==========
+document.addEventListener('paste', e => {
+  const text = e.clipboardData.getData('text');
+  if (text && text.trim().startsWith('{')) {
+    try {
+      let cleaned = text.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+      jsonData = JSON.parse(cleaned);
+      buildFilterBar();
+      recalcScale();
+      render();
+    } catch (_) { /* not valid JSON, ignore */ }
+  }
+});
+</script>
+</body>
+</html>

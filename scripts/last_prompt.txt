@@ -1,0 +1,37 @@
+请仔细分析这张截图中的所有 UI 元素（按钮、输入框、标签、图标、菜单项、下拉框、复选框、滑块、标签页、工具栏、状态栏等），并以 JSON 格式输出每个元素的信息。
+
+## 输出要求
+
+返回一个 JSON 对象，格式如下：
+
+```json
+{{
+  "image_width": <图片宽度像素>,
+  "image_height": <图片高度像素>,
+  "elements": [
+    {{
+      "id": 1,
+      "type": "<元素类型>",
+      "label": "<元素上显示的文字，无文字则为空字符串>",
+      "purpose": "<该元素的功能用途简述>",
+      "bbox": {{
+        "x": <左上角x坐标>,
+        "y": <左上角y坐标>,
+        "width": <宽度>,
+        "height": <高度>
+      }},
+      "interactive": <true/false 是否可交互>,
+      "state": "<可选: enabled/disabled/checked/unchecked/selected/hover>"
+    }}
+  ]
+}}
+```
+
+## 规则
+
+1. **坐标系**: 左上角为原点 (0, 0)，x 向右增长，y 向下增长，单位为像素
+2. **bbox 精确性**: 尽可能精确地框选每个元素的可见边界，不要留太多空白
+3. **层级**: 只输出叶子级可见元素，不要输出容器/布局等不可见元素
+4. **type 取值**: button, input, label, icon, checkbox, radio, slider, tab, menu_item, dropdown, toolbar, statusbar, scrollbar, image, link, progress_bar, tooltip, dialog, panel, list_item, tree_item, table_cell, other
+5. **完整性**: 不要遗漏任何可见的 UI 元素
+6. **只输出 JSON**: 不要输出任何解释性文字，只返回上述格式的 JSON

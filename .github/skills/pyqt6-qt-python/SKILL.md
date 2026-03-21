@@ -1,22 +1,33 @@
 ---
-name: pyside6-qt-python
+name: pyqt6-qt-python
 description: 
-  "Practical guidelines and recipes for PySide6 (Qt for Python 6) in a desktop video editor application. Covers widgets, layouts, signals & slots, QThread for background processing, QMediaPlayer for video playback, and file dialogs. Triggers when writing or reviewing code that imports from PySide6, creates QWidget/QMainWindow subclasses, uses Qt signals/slots, or runs background tasks with QThread."
+  "Practical guidelines and recipes for PyQt6 (Qt 6 for Python) in a desktop application. Covers widgets, layouts, signals & slots (pyqtSignal/pyqtSlot), QThread for background processing, QMediaPlayer for video playback, file dialogs, and scoped enums. Triggers when writing or reviewing code that imports from PyQt6, creates QWidget/QMainWindow subclasses, uses Qt signals/slots, or runs background tasks with QThread."
 license: MIT
 metadata:
   author: project-skill
   version: "1.0.0"
 ---
 
-# PySide6 (Qt for Python 6) Skill
+# PyQt6 (Qt 6 for Python) Skill
 
-Official Python bindings for Qt 6 provided by The Qt Company.
+Python bindings for Qt 6 maintained by Riverbank Computing.
 
-- **Package:** `pyside6` (`pip install pyside6`)
-- **API Reference:** https://doc.qt.io/qtforpython-6/api.html
-- **Tutorials:** https://doc.qt.io/qtforpython-6/tutorials/index.html
-- **Examples:** https://doc.qt.io/qtforpython-6/examples/index.html
-- **Porting from PySide2:** https://doc.qt.io/qtforpython-6/faq/porting_from2.html
+- **Package:** `PyQt6` (`pip install PyQt6`)
+- **API Reference:** https://www.riverbankcomputing.com/static/Docs/PyQt6/
+- **PyPI:** https://pypi.org/project/PyQt6/
+- **Porting from PyQt5:** https://www.riverbankcomputing.com/static/Docs/PyQt6/pyqt5_differences.html
+
+### Key Differences from PySide6
+
+| PySide6 | PyQt6 |
+|---|---|
+| `from PySide6.QtCore import Signal` | `from PyQt6.QtCore import pyqtSignal` |
+| `from PySide6.QtCore import Slot` | `from PyQt6.QtCore import pyqtSlot` |
+| `Qt.Horizontal` | `Qt.Orientation.Horizontal` (scoped enums required) |
+| `QMessageBox.Yes` | `QMessageBox.StandardButton.Yes` |
+| `QKeySequence.Open` | `QKeySequence.StandardKey.Open` |
+| `pip install pyside6` | `pip install PyQt6` |
+| `--collect-all PySide6` | `--collect-all PyQt6` |
 
 ---
 
@@ -25,7 +36,7 @@ Official Python bindings for Qt 6 provided by The Qt Company.
 Use this skill when:
 - Creating or modifying Qt widgets, windows, or dialogs
 - Connecting signals to slots or defining custom signals
-- Running ffmpeg or other heavy work off the main thread (QThread)
+- Running heavy work off the main thread (QThread)
 - Implementing video playback with `QMediaPlayer`
 - Designing layouts (grid, vertical, horizontal, splitters)
 - Opening/saving files via `QFileDialog`
@@ -36,12 +47,12 @@ Use this skill when:
 
 ```python
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtWidgets import QApplication, QMainWindow
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Video Editor")
+        self.setWindowTitle("My App")
         self.resize(1280, 720)
 
 if __name__ == '__main__':
@@ -79,7 +90,7 @@ if __name__ == '__main__':
 ### Setting Up a Central Widget
 
 ```python
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -105,13 +116,13 @@ class MainWindow(QMainWindow):
 | `QStackedLayout` | Show one widget at a time (like tabs) |
 
 ```python
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QPushButton, QLabel
 )
-from PySide6.QtCore import Qt
+from PyQt6.QtCore import Qt
 
 # Horizontal split: timeline left, properties right
-splitter = QSplitter(Qt.Horizontal)
+splitter = QSplitter(Qt.Orientation.Horizontal)
 splitter.addWidget(timeline_widget)
 splitter.addWidget(properties_widget)
 splitter.setStretchFactor(0, 3)   # timeline gets 3x space
@@ -140,7 +151,7 @@ Signals decouple UI events from logic. Connect them with `.connect()`.
 btn = QPushButton("Export")
 btn.clicked.connect(self.on_export)          # no args
 
-slider = QSlider(Qt.Horizontal)
+slider = QSlider(Qt.Orientation.Horizontal)
 slider.valueChanged.connect(self.on_seek)    # int arg
 
 combo = QComboBox()
@@ -150,12 +161,12 @@ combo.currentTextChanged.connect(self.on_format_changed)  # str arg
 ### Custom Signals
 
 ```python
-from PySide6.QtCore import QObject, Signal
+from PyQt6.QtCore import QObject, pyqtSignal
 
 class VideoProcessor(QObject):
-    progress_changed = Signal(int)    # emits an int (0-100)
-    finished         = Signal(str)    # emits output file path
-    error_occurred   = Signal(str)    # emits error message
+    progress_changed = pyqtSignal(int)    # emits an int (0-100)
+    finished         = pyqtSignal(str)    # emits output file path
+    error_occurred   = pyqtSignal(str)    # emits error message
 
     def process(self):
         # ... do work ...
@@ -184,13 +195,13 @@ processor.progress_changed.disconnect(progress_bar.setValue)
 ### Pattern: Worker + QThread
 
 ```python
-from PySide6.QtCore import QObject, QThread, Signal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 import ffmpeg
 
 class FfmpegWorker(QObject):
-    progress = Signal(int)        # 0-100
-    finished = Signal()
-    error    = Signal(str)
+    progress = pyqtSignal(int)        # 0-100
+    finished = pyqtSignal()
+    error    = pyqtSignal(str)
 
     def __init__(self, input_path: str, output_path: str):
         super().__init__()
@@ -252,9 +263,9 @@ class ExportController:
 ## Video Playback (QMediaPlayer)
 
 ```python
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtCore import QUrl
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtCore import QUrl
 
 class VideoPlayer(QWidget):
     def __init__(self):
@@ -273,7 +284,7 @@ class VideoPlayer(QWidget):
         controls = QHBoxLayout()
         self.play_btn  = QPushButton("Play")
         self.pause_btn = QPushButton("Pause")
-        self.slider    = QSlider(Qt.Horizontal)
+        self.slider    = QSlider(Qt.Orientation.Horizontal)
         controls.addWidget(self.play_btn)
         controls.addWidget(self.pause_btn)
         controls.addWidget(self.slider)
@@ -311,7 +322,7 @@ class VideoPlayer(QWidget):
 ## File Dialogs
 
 ```python
-from PySide6.QtWidgets import QFileDialog
+from PyQt6.QtWidgets import QFileDialog
 
 # Open a video file
 path, _ = QFileDialog.getOpenFileName(
@@ -340,8 +351,8 @@ folder = QFileDialog.getExistingDirectory(self, "Select Folder")
 ## Menu Bar & Toolbar
 
 ```python
-from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QMenuBar, QToolBar
+from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtWidgets import QMenuBar, QToolBar
 
 class MainWindow(QMainWindow):
     def _setup_menu(self):
@@ -349,7 +360,7 @@ class MainWindow(QMainWindow):
 
         file_menu = menu.addMenu("&File")
         open_action = QAction("&Open…", self)
-        open_action.setShortcut(QKeySequence.Open)        # Ctrl+O
+        open_action.setShortcut(QKeySequence.StandardKey.Open)  # Ctrl+O
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
 
@@ -404,7 +415,7 @@ def on_export_finished(self):
 ### Show error dialog
 
 ```python
-from PySide6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 def show_error(self, message: str):
     QMessageBox.critical(self, "Error", message)
@@ -416,9 +427,9 @@ def show_error(self, message: str):
 def closeEvent(self, event):
     reply = QMessageBox.question(
         self, "Quit", "Are you sure you want to quit?",
-        QMessageBox.Yes | QMessageBox.No
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
     )
-    if reply == QMessageBox.Yes:
+    if reply == QMessageBox.StandardButton.Yes:
         event.accept()
     else:
         event.ignore()
@@ -436,7 +447,7 @@ def closeEvent(self, event):
 | Worker runs on main thread | Call `moveToThread()` before connecting `started` |
 | Memory leak with QThread | Connect `finished` to `deleteLater` on both worker and thread |
 | `QApplication` must exist first | Instantiate `QApplication` before any `QWidget` |
-| PyInstaller missing Qt plugins | Add `--collect-all PySide6` to PyInstaller args |
+| PyInstaller missing Qt plugins | Add `--collect-all PyQt6` to PyInstaller args |
 
 ---
 
@@ -444,7 +455,7 @@ def closeEvent(self, event):
 
 ```python
 # Widgets
-from PySide6.QtWidgets import (
+from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QPushButton, QLabel, QLineEdit, QSlider, QProgressBar,
     QComboBox, QListWidget, QSplitter, QScrollArea,
@@ -452,28 +463,27 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QToolBar,
 )
 # Core (signals, threads, timers, URLs)
-from PySide6.QtCore import (
-    Qt, QObject, QThread, Signal, Slot,
+from PyQt6.QtCore import (
+    Qt, QObject, QThread, pyqtSignal, pyqtSlot,
     QTimer, QUrl, QSize,
 )
 # GUI (actions, icons, key sequences)
-from PySide6.QtGui import QAction, QKeySequence, QIcon, QPixmap
+from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPixmap
 
 # Multimedia
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimediaWidgets import QVideoWidget
 ```
 
 ---
 
 ## References
 
-- **API Reference:** https://doc.qt.io/qtforpython-6/api.html
-- **Getting Started:** https://doc.qt.io/qtforpython-6/gettingstarted.html
-- **Tutorials:** https://doc.qt.io/qtforpython-6/tutorials/index.html
-- **Examples:** https://doc.qt.io/qtforpython-6/examples/index.html
-- **QMediaPlayer:** https://doc.qt.io/qtforpython-6/PySide6/QtMultimedia/QMediaPlayer.html
-- **QThread:** https://doc.qt.io/qtforpython-6/PySide6/QtCore/QThread.html
-- **QFileDialog:** https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QFileDialog.html
-- **Signals & Slots:** https://doc.qt.io/qtforpython-6/tutorials/basictutorial/signals_and_slots.html
-- **Deployment (PyInstaller):** https://doc.qt.io/qtforpython-6/deployment/index.html
+- **API Reference:** https://www.riverbankcomputing.com/static/Docs/PyQt6/
+- **PyPI:** https://pypi.org/project/PyQt6/
+- **Differences from PyQt5:** https://www.riverbankcomputing.com/static/Docs/PyQt6/pyqt5_differences.html
+- **QMediaPlayer:** https://www.riverbankcomputing.com/static/Docs/PyQt6/api/qtmultimedia/qmediaplayer.html
+- **QThread:** https://www.riverbankcomputing.com/static/Docs/PyQt6/api/qtcore/qthread.html
+- **QFileDialog:** https://www.riverbankcomputing.com/static/Docs/PyQt6/api/qtwidgets/qfiledialog.html
+- **Signals & Slots:** https://www.riverbankcomputing.com/static/Docs/PyQt6/signals_slots.html
+- **Scoped Enums:** https://www.riverbankcomputing.com/static/Docs/PyQt6/pyqt5_differences.html#scoped-enums
