@@ -1,0 +1,17 @@
+# Binaries
+server-go.exe
+server-go
+
+# Test binary, built with `go test`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp

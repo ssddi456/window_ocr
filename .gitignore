@@ -60,3 +60,4 @@ htmlcov/
 dmypy.json
 
 sessions
+*.exe

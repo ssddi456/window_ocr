@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Window OCR — 手动测试页面</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d28;
+            --border: #2a2e3a;
+            --text: #e1e4ed;
+            --text-secondary: #8b90a0;
+            --accent: #6c8cff;
+            --accent-hover: #8aa4ff;
+            --success: #4ade80;
+            --error: #f87171;
+            --radius: 12px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 24px;
+        }
+        .container { max-width: 900px; width: 100%; }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-top: 4px;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        .status-badge.online { background: #14532d40; color: var(--success); }
+        .status-badge.offline { background: #7f1d1d40; color: var(--error); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-dot.online { background: var(--success); }
+        .status-dot.offline { background: var(--error); }
+
+        /* Drop zone */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 48px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: var(--surface);
+            position: relative;
+            min-height: 220px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: #1a1f30;
+        }
+        .drop-zone.has-image {
+            padding: 12px;
+        }
+        .drop-zone-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.6;
+        }
+        .drop-zone-text {
+            font-size: 15px;
+            color: var(--text-secondary);
+        }
+        .drop-zone-text strong { color: var(--accent); }
+        .drop-zone-hint {
+            font-size: 12px;
+            color: var(--text-secondary);
+            opacity: 0.6;
+            margin-top: 6px;
+        }
+        .preview-img {
+            max-width: 100%;
+            max-height: 350px;
+            border-radius: 8px;
+            object-fit: contain;
+            display: none;
+        }
+        .preview-img.visible { display: block; }
+        .clear-btn {
+            position: absolute;
+            top: 10px;
+            right: 14px;
+            background: #ffffff15;
+            border: none;
+            color: var(--text);
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: none;
+        }
+        .drop-zone.has-image .clear-btn { display: block; }
+
+        /* Buttons */
+        .actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+        .btn {
+            padding: 10px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+        }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-primary:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: var(--border);
+            color: var(--text);
+        }
+        .btn-secondary:hover { background: #3a3e4a; }
+
+        /* Loading spinner */
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid #ffffff40;
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: none;
+        }
+        .btn-primary.loading .spinner { display: inline-block; }
+        .btn-primary.loading .btn-label { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Results */
+        .result-section {
+            margin-top: 24px;
+            display: none;
+        }
+        .result-section.visible { display: block; }
+        .result-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .result-card h3 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+        }
+        .result-text {
+            font-size: 15px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .block-list {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .block-tag {
+            background: var(--border);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .block-count {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+
+        /* Error */
+        .error-banner {
+            background: #7f1d1d40;
+            border: 1px solid #f8717140;
+            color: var(--error);
+            padding: 14px 18px;
+            border-radius: var(--radius);
+            margin-top: 16px;
+            display: none;
+        }
+        .error-banner.visible { display: block; }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 10px 22px;
+            border-radius: 8px;
+            font-size: 13px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .toast.show { opacity: 1; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🔍 Window OCR 测试</h1>
+            <p class="subtitle">Kimi 图像识别 · Golang 后端服务</p>
+            <div class="status-badge" id="statusBadge">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">检测中…</span>
+            </div>
+        </div>
+
+        <!-- Drop zone -->
+        <div class="drop-zone" id="dropZone">
+            <div id="dropPlaceholder">
+                <div class="drop-zone-icon">🖼️</div>
+                <div class="drop-zone-text">
+                    拖拽图片到此处，或 <strong>点击选择文件</strong>
+                </div>
+                <div class="drop-zone-hint">也支持从剪贴板 <strong>Ctrl+V</strong> 粘贴</div>
+            </div>
+            <img class="preview-img" id="previewImg" alt="预览">
+            <button class="clear-btn" id="clearBtn">✕ 清除</button>
+            <input type="file" id="fileInput" accept="image/*" hidden>
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+            <button class="btn btn-primary" id="ocrBtn" disabled>
+                <span class="btn-label">🔬 开始识别</span>
+                <div class="spinner"></div>
+            </button>
+            <button class="btn btn-secondary" id="pasteBtn">📋 粘贴图片</button>
+        </div>
+
+        <!-- Error -->
+        <div class="error-banner" id="errorBanner"></div>
+
+        <!-- Results -->
+        <div class="result-section" id="resultSection">
+            <div class="result-card">
+                <h3>📝 完整文本</h3>
+                <div class="result-text" id="fullText"></div>
+            </div>
+            <div class="result-card">
+                <h3>🧩 文本块</h3>
+                <div class="block-count" id="blockCount"></div>
+                <ul class="block-list" id="blockList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8618';
+        let currentBase64 = null;
+
+        // DOM refs
+        const dropZone = document.getElementById('dropZone');
+        const dropPlaceholder = document.getElementById('dropPlaceholder');
+        const previewImg = document.getElementById('previewImg');
+        const clearBtn = document.getElementById('clearBtn');
+        const fileInput = document.getElementById('fileInput');
+        const ocrBtn = document.getElementById('ocrBtn');
+        const pasteBtn = document.getElementById('pasteBtn');
+        const statusBadge = document.getElementById('statusBadge');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const errorBanner = document.getElementById('errorBanner');
+        const resultSection = document.getElementById('resultSection');
+        const fullText = document.getElementById('fullText');
+        const blockList = document.getElementById('blockList');
+        const blockCount = document.getElementById('blockCount');
+        const toast = document.getElementById('toast');
+
+        // --- Health check ---
+        async function checkHealth() {
+            try {
+                const res = await fetch(`${API_BASE}/health`);
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    setStatus(true, data.ocr_enabled ? '服务在线 · OCR 已启用' : '服务在线 · OCR 未配置 API Key');
+                } else {
+                    setStatus(false, '服务异常');
+                }
+            } catch {
+                setStatus(false, '服务不可用');
+            }
+        }
+        function setStatus(online, text) {
+            statusDot.className = 'status-dot ' + (online ? 'online' : 'offline');
+            statusBadge.className = 'status-badge ' + (online ? 'online' : 'offline');
+            statusText.textContent = text;
+        }
+        checkHealth();
+        setInterval(checkHealth, 15000);
+
+        // --- File handling ---
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', e => {
+            const file = e.target.files[0];
+            if (file) loadFile(file);
+        });
+
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) loadFile(file);
+            else showToast('请拖入图片文件');
+        });
+
+        clearBtn.addEventListener('click', clearImage);
+
+        // --- Paste ---
+        document.addEventListener('paste', e => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    const blob = item.getAsFile();
+                    loadFile(blob);
+                    return;
+                }
+            }
+        });
+        pasteBtn.addEventListener('click', () => showToast('请使用 Ctrl+V 直接粘贴图片'));
+
+        // --- Load & preview ---
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const dataUrl = reader.result;
+                // Strip prefix for API
+                currentBase64 = dataUrl.split(',')[1] || dataUrl;
+                previewImg.src = dataUrl;
+                previewImg.classList.add('visible');
+                dropPlaceholder.style.display = 'none';
+                dropZone.classList.add('has-image');
+                ocrBtn.disabled = false;
+                errorBanner.classList.remove('visible');
+                resultSection.classList.remove('visible');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearImage() {
+            currentBase64 = null;
+            previewImg.classList.remove('visible');
+            previewImg.src = '';
+            dropPlaceholder.style.display = '';
+            dropZone.classList.remove('has-image');
+            ocrBtn.disabled = true;
+            fileInput.value = '';
+        }
+
+        // --- OCR request ---
+        ocrBtn.addEventListener('click', async () => {
+            if (!currentBase64) return;
+            ocrBtn.classList.add('loading');
+            ocrBtn.disabled = true;
+            errorBanner.classList.remove('visible');
+            resultSection.classList.remove('visible');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/ocr`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image_base64: currentBase64 }),
+                });
+                const data = await res.json();
+
+                if (!res.ok || !data.success) {
+                    showError(data.error || `请求失败 (HTTP ${res.status})`);
+                    return;
+                }
+
+                // Render results
+                fullText.textContent = data.full_text || '(无文本)';
+                blockList.innerHTML = '';
+                if (data.blocks && data.blocks.length > 0) {
+                    blockCount.textContent = `共 ${data.blocks.length} 个文本块`;
+                    data.blocks.forEach(b => {
+                        const li = document.createElement('li');
+                        li.className = 'block-tag';
+                        li.textContent = b.text;
+                        blockList.appendChild(li);
+                    });
+                } else {
+                    blockCount.textContent = '无文本块';
+                }
+                resultSection.classList.add('visible');
+                showToast('✅ 识别完成');
+            } catch (err) {
+                showError(`网络错误: ${err.message}`);
+            } finally {
+                ocrBtn.classList.remove('loading');
+                ocrBtn.disabled = false;
+            }
+        });
+
+        function showError(msg) {
+            errorBanner.textContent = '❌ ' + msg;
+            errorBanner.classList.add('visible');
+        }
+
+        function showToast(msg) {
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+    </script>
+</body>
+</html>
