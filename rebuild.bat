@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo   Window OCR - Rebuild & PM2 Restart
+echo   Window OCR - Rebuild and PM2 Restart
 echo ========================================
 echo.
 
