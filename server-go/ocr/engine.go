@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"strings"
@@ -27,21 +28,32 @@ type OCRResult struct {
 	Success  bool    `json:"success"`
 	FullText string  `json:"full_text"`
 	Blocks   []Block `json:"blocks"`
+	Cached   bool    `json:"cached,omitempty"` // true if result came from cache
 }
 
-// Engine is the Kimi OCR engine using file-extract API.
+// Engine is the OCR engine with caching and fallback support.
 type Engine struct {
 	apiKey  string
 	baseURL string
+	ocrMode string // "auto", "kimi", "wechat"
 	client  *openai.Client
+
+	// Cache for exact SHA-256 and perceptual similarity lookups
+	cache *Cache
+
+	// WeChat OCR fallback
+	wechatOCR *WeChatOCR
 }
 
 // NewEngine creates a new OCR engine from current config.
 func NewEngine() *Engine {
 	cfg := config.Get()
 	e := &Engine{
-		apiKey:  cfg.Kimi.APIKey,
-		baseURL: cfg.Kimi.BaseURL,
+		apiKey:    cfg.Kimi.APIKey,
+		baseURL:   cfg.Kimi.BaseURL,
+		ocrMode:   cfg.OCRMode,
+		cache:     NewCache(10),
+		wechatOCR: NewWeChatOCR(""),
 	}
 	if e.apiKey != "" {
 		client := openai.NewClient(
@@ -58,6 +70,7 @@ func (e *Engine) ReloadConfig() {
 	cfg := config.Reload()
 	e.apiKey = cfg.Kimi.APIKey
 	e.baseURL = cfg.Kimi.BaseURL
+	e.ocrMode = cfg.OCRMode
 	if e.apiKey != "" {
 		client := openai.NewClient(
 			option.WithAPIKey(e.apiKey),
@@ -69,18 +82,30 @@ func (e *Engine) ReloadConfig() {
 	}
 }
 
-// Available returns true if API key is configured.
+// Available returns true if any OCR backend is available.
+// Respects ocr_mode: "wechat" only needs WeChat, "kimi" only needs Kimi.
 func (e *Engine) Available() bool {
-	return e.apiKey != ""
+	switch e.ocrMode {
+	case "wechat":
+		return e.wechatOCR.Available()
+	case "kimi":
+		return e.apiKey != ""
+	default: // "auto"
+		return e.apiKey != "" || e.wechatOCR.Available()
+	}
 }
 
-// OCRFromBase64 decodes a base64-encoded image and runs OCR via Kimi file-extract API.
-// The base64 string may include the data URI prefix (e.g. "data:image/png;base64,").
+// OCRFromBase64 decodes a base64-encoded image and runs OCR.
+//
+// Cache lookup order (applies to all modes):
+//  1. Exact SHA-256 match
+//  2. Perceptual similarity (dHash) among the most recent 10 images (>99%)
+//
+// OCR backend selection is controlled by config ocr_mode:
+//   - "auto":  Kimi first, fallback to WeChat OCR on failure
+//   - "kimi":  Kimi only, error if unavailable or fails
+//   - "wechat": WeChat OCR only, error if unavailable
 func (e *Engine) OCRFromBase64(ctx context.Context, b64Data string) (*OCRResult, error) {
-	if !e.Available() {
-		return nil, fmt.Errorf("Kimi API key not configured")
-	}
-
 	// Strip data URI prefix if present
 	b64Data = stripDataURIPrefix(b64Data)
 
@@ -90,24 +115,104 @@ func (e *Engine) OCRFromBase64(ctx context.Context, b64Data string) (*OCRResult,
 		return nil, fmt.Errorf("base64 decode failed: %w", err)
 	}
 
-	// Auto-rotate based on EXIF orientation (fixes portrait photos)
+	// Auto-rotate based on EXIF orientation
 	imgFormat := detectFormat(raw)
 	if imgFormat != "" {
 		corrected, err := decodeWithOrientation(bytes.NewReader(raw), imgFormat)
 		if err == nil {
 			raw = corrected
 		}
-		// On failure, fall through with original raw bytes
 	}
 
-	// Write to temp file
+	// ---- Cache lookups (shared by all modes) ----
+
+	// 1. Exact SHA-256 match
+	hash := SHA256Hash(raw)
+	if cached := e.cache.Lookup(hash); cached != nil {
+		result := *cached
+		result.Cached = true
+		return &result, nil
+	}
+
+	// 2. Perceptual similarity (dHash) among recent 10
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err == nil {
+		dh := dHash(img)
+		if cached := e.cache.LookupSimilarity(dh); cached != nil {
+			result := *cached
+			result.Cached = true
+			return &result, nil
+		}
+	}
+
+	// ---- Call OCR based on mode ----
+
+	var result *OCRResult
+	switch e.ocrMode {
+	case "wechat":
+		result, err = e.callWechatOnly(ctx, img)
+	case "kimi":
+		result, err = e.callKimiOnly(ctx, raw)
+	default: // "auto"
+		result, err = e.callAuto(ctx, raw, img)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache
+	if img != nil {
+		e.cache.Store(hash, dHash(img), result)
+	} else {
+		e.cache.Store(hash, 0, result)
+	}
+
+	return result, nil
+}
+
+// callAuto implements "auto" mode: Kimi first, WeChat fallback.
+func (e *Engine) callAuto(ctx context.Context, raw []byte, img image.Image) (*OCRResult, error) {
+	result, err := e.callKimiOCR(ctx, raw)
+	if err != nil {
+		if img != nil && e.wechatOCR.Available() {
+			return e.wechatOCR.OCRFromImage(ctx, img)
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+// callKimiOnly implements "kimi" mode: Kimi only, no fallback.
+func (e *Engine) callKimiOnly(ctx context.Context, raw []byte) (*OCRResult, error) {
+	return e.callKimiOCR(ctx, raw)
+}
+
+// callWechatOnly implements "wechat" mode: WeChat OCR only.
+func (e *Engine) callWechatOnly(ctx context.Context, img image.Image) (*OCRResult, error) {
+	if img == nil {
+		return nil, fmt.Errorf("wechat OCR: failed to decode image")
+	}
+	if !e.wechatOCR.Available() {
+		return nil, fmt.Errorf("wechat OCR not available")
+	}
+	return e.wechatOCR.OCRFromImage(ctx, img)
+}
+
+// callKimiOCR writes raw image bytes to a temp file, calls Kimi API,
+// and deletes the temp file immediately after the API call completes.
+func (e *Engine) callKimiOCR(ctx context.Context, raw []byte) (*OCRResult, error) {
+	if e.apiKey == "" {
+		return nil, fmt.Errorf("Kimi API key not configured")
+	}
+
 	tmpDir := os.TempDir()
 	tmpFile, err := os.CreateTemp(tmpDir, "ocr_*.png")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer os.Remove(tmpPath) // clean up temp file after OCR completes
 
 	if _, err := tmpFile.Write(raw); err != nil {
 		tmpFile.Close()
@@ -115,24 +220,21 @@ func (e *Engine) OCRFromBase64(ctx context.Context, b64Data string) (*OCRResult,
 	}
 	tmpFile.Close()
 
-	// Call OCR
 	return e.OCR(ctx, tmpPath)
 }
 
 // OCR uploads an image file to Kimi file-extract API and returns recognized text.
 func (e *Engine) OCR(ctx context.Context, imagePath string) (*OCRResult, error) {
-	if !e.Available() {
+	if e.apiKey == "" {
 		return nil, fmt.Errorf("Kimi API key not configured")
 	}
 
-	// Open file for upload
 	f, err := os.Open(imagePath)
 	if err != nil {
 		return nil, fmt.Errorf("image file not found: %w", err)
 	}
 	defer f.Close()
 
-	// Upload file with file-extract purpose
 	if e.client == nil {
 		return nil, fmt.Errorf("Kimi API client not initialized")
 	}
@@ -143,15 +245,17 @@ func (e *Engine) OCR(ctx context.Context, imagePath string) (*OCRResult, error) 
 	if err != nil {
 		return nil, fmt.Errorf("Kimi file upload failed: %w", err)
 	}
+	// Delete the remote file on Kimi's server after OCR completes
+	defer func() {
+		_, _ = e.client.Files.Delete(ctx, fileObj.ID)
+	}()
 
-	// Wait a moment for processing (Kimi may need time)
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-time.After(500 * time.Millisecond):
 	}
 
-	// Retrieve file content
 	resp, err := e.client.Files.Content(ctx, fileObj.ID)
 	if err != nil {
 		return nil, fmt.Errorf("Kimi file content retrieval failed: %w", err)
@@ -163,7 +267,6 @@ func (e *Engine) OCR(ctx context.Context, imagePath string) (*OCRResult, error) 
 		return nil, fmt.Errorf("Kimi file content read failed: %w", err)
 	}
 
-	// Parse response
 	fullText := string(body)
 	var data struct {
 		Content  string `json:"content"`
@@ -173,7 +276,6 @@ func (e *Engine) OCR(ctx context.Context, imagePath string) (*OCRResult, error) 
 		fullText = data.Content
 	}
 
-	// Split into non-empty lines as blocks
 	lines := strings.Split(fullText, "\n")
 	var blocks []Block
 	for _, line := range lines {

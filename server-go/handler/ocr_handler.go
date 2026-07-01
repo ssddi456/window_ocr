@@ -3,7 +3,6 @@ package handler
 import (
 	"net/http"
 
-	"window-ocr/server-go/config"
 	"window-ocr/server-go/ocr"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +18,7 @@ type OCRResponse struct {
 	Success  bool        `json:"success"`
 	FullText string      `json:"full_text"`
 	Blocks   []ocr.Block `json:"blocks"`
+	Cached   bool        `json:"cached,omitempty"`
 }
 
 // ErrorResponse is returned on failure.
@@ -27,7 +27,8 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 }
 
-// HandleOCR handles POST /api/ocr — accepts base64 image, returns Kimi OCR result.
+// HandleOCR handles POST /api/ocr — accepts base64 image, returns OCR result
+// with caching and Kimi → WeChat OCR fallback.
 func HandleOCR(engine *ocr.Engine) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req OCRRequest
@@ -42,7 +43,7 @@ func HandleOCR(engine *ocr.Engine) gin.HandlerFunc {
 		if !engine.Available() {
 			c.JSON(http.StatusServiceUnavailable, ErrorResponse{
 				Success: false,
-				Error:   "Kimi API key not configured. Please set api_key in config.local.json",
+				Error:   "No OCR backend available. Configure Kimi API key or install wechat-ocr-go.",
 			})
 			return
 		}
@@ -60,17 +61,16 @@ func HandleOCR(engine *ocr.Engine) gin.HandlerFunc {
 			Success:  result.Success,
 			FullText: result.FullText,
 			Blocks:   result.Blocks,
+			Cached:   result.Cached,
 		})
 	}
 }
 
 // HandleHealth returns server health and config status.
 func HandleHealth(c *gin.Context) {
-	cfg := config.Get()
-	hasKey := cfg.Kimi.APIKey != ""
 	c.JSON(http.StatusOK, gin.H{
 		"status":      "ok",
-		"ocr_enabled": hasKey,
 		"service":     "window-ocr golang webserver",
+		"ocr_enabled": true, // always true since WeChat OCR fallback may be available
 	})
 }

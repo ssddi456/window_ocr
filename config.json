@@ -1,4 +1,5 @@
 {
+  "ocr_mode": "auto",
   "kimi": {
     "api_key": "",
     "base_url": "https://api.moonshot.cn/v1"

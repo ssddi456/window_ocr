@@ -15,8 +15,9 @@ type KimiConfig struct {
 
 // AppConfig is the top-level application config.
 type AppConfig struct {
-	Kimi  KimiConfig `json:"kimi"`
-	Port  int        `json:"port"` // server listen port, default 8618
+	Kimi    KimiConfig `json:"kimi"`
+	Port    int        `json:"port"`     // server listen port, default 8618
+	OCRMode string     `json:"ocr_mode"` // "auto" (default), "kimi", "wechat"
 }
 
 var (
@@ -31,7 +32,8 @@ func DefaultConfig() AppConfig {
 		Kimi: KimiConfig{
 			BaseURL: "https://api.moonshot.cn/v1",
 		},
-		Port: 8618,
+		Port:    8618,
+		OCRMode: "auto",
 	}
 }
 
@@ -98,6 +100,9 @@ func loadConfig() AppConfig {
 			if base.Port > 0 {
 				cfg.Port = base.Port
 			}
+			if base.OCRMode != "" {
+				cfg.OCRMode = base.OCRMode
+			}
 		}
 	}
 
@@ -113,6 +118,9 @@ func loadConfig() AppConfig {
 			}
 			if local.Port > 0 {
 				cfg.Port = local.Port
+			}
+			if local.OCRMode != "" {
+				cfg.OCRMode = local.OCRMode
 			}
 		}
 	}
